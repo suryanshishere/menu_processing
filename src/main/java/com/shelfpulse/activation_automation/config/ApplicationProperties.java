@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "app")
 public class ApplicationProperties {
 
+    private String mode;
+    private String secretKey;
     private String envMode;
     private Jwt jwt = new Jwt();
     private String bcryptCostFactor;
@@ -22,6 +24,22 @@ public class ApplicationProperties {
     private String goBackendUrl;
     private String redisUrlDev;
     private String redisUrlProd;
+
+    public String getMode() {
+        return mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
+    }
+
+    public String getSecretKey() {
+        return secretKey;
+    }
+
+    public void setSecretKey(String secretKey) {
+        this.secretKey = secretKey;
+    }
 
     public String getEnvMode() {
         return envMode;
