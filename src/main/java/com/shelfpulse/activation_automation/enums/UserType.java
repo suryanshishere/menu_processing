@@ -16,4 +16,13 @@ public enum UserType {
     public String getValue() {
         return value;
     }
+
+    public static UserType fromValue(String value) {
+        for (UserType type : UserType.values()) {
+            if (type.getValue().equals(value)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown UserType value: " + value);
+    }
 }
