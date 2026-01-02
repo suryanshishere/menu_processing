@@ -2,16 +2,14 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum MenuStatus {
-    PROCESSING("processing"),
-    GENERATED("generated"),
-    COMPLETED("completed"),
-    FAILED("failed"),
-    INACTIVE("inactive");
+public enum TemplateType {
+    SPIRAL("spiral"),
+    CARD("card"),
+    WALL("wall");
 
     private final String value;
 
-    MenuStatus(String value) {
+    TemplateType(String value) {
         this.value = value;
     }
 

@@ -2,16 +2,13 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum MenuStatus {
-    PROCESSING("processing"),
-    GENERATED("generated"),
-    COMPLETED("completed"),
-    FAILED("failed"),
-    INACTIVE("inactive");
+public enum UserType {
+    ADMIN("admin"),
+    SUPER_ADMIN("superAdmin");
 
     private final String value;
 
-    MenuStatus(String value) {
+    UserType(String value) {
         this.value = value;
     }
 

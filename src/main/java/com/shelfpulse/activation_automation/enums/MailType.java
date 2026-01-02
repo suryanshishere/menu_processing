@@ -2,16 +2,13 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum MenuStatus {
-    PROCESSING("processing"),
-    GENERATED("generated"),
-    COMPLETED("completed"),
-    FAILED("failed"),
-    INACTIVE("inactive");
+public enum MailType {
+    RESET_PASSWORD("reset_password"),
+    PROFILE_UPDATE("profile_update");
 
     private final String value;
 
-    MenuStatus(String value) {
+    MailType(String value) {
         this.value = value;
     }
 
