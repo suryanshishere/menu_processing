@@ -33,24 +33,40 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = null;
         String adminId = null;
 
+        logger.debug("Processing request: " + request.getRequestURI());
+        logger.debug("Authorization header present: " + (authHeader != null));
+
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
             try {
-                adminId = jwtUtil.extractUsername(token); // logic extracts subject which is adminId
+                adminId = jwtUtil.extractUsername(token);
+                logger.debug("Extracted adminId from token: " + adminId);
             } catch (Exception e) {
                 logger.error("Error parsing JWT: " + e.getMessage());
             }
+        } else {
+            logger.debug("No Bearer token found in Authorization header");
         }
 
         if (adminId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            UserDetails userDetails = this.userDetailsService.loadUserByUsername(adminId);
+            try {
+                UserDetails userDetails = this.userDetailsService.loadUserByUsername(adminId);
+                logger.debug("Loaded user details for adminId: " + adminId);
 
-            if (jwtUtil.validateToken(token, userDetails.getUsername())) {
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                if (jwtUtil.validateToken(token, userDetails.getUsername())) {
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities());
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                    logger.debug("Authentication successful for adminId: " + adminId);
+                } else {
+                    logger.debug("Token validation failed for adminId: " + adminId);
+                }
+            } catch (Exception e) {
+                logger.error("Error loading user details: " + e.getMessage());
             }
+        } else if (adminId == null) {
+            logger.debug("adminId is null, skipping authentication");
         }
         filterChain.doFilter(request, response);
     }
