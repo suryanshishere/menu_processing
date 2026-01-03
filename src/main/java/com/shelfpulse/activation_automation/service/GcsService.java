@@ -7,15 +7,13 @@ import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
 import com.shelfpulse.activation_automation.config.ApplicationProperties;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -44,6 +42,21 @@ public class GcsService {
     public void init() {
         try {
             ApplicationProperties.Gcp gcp = applicationProperties.getGcp();
+            if (gcp == null) {
+                log.warn("GCP configuration is missing - GCS service will not be available");
+                return;
+            }
+
+            if (gcp.getProjectId() == null || gcp.getBucketPrivateKey() == null || gcp.getClientEmail() == null) {
+                log.warn("GCP credentials are incomplete - GCS service will not be available. " +
+                        "projectId={}, bucketPrivateKey={}, clientEmail={}",
+                        gcp.getProjectId() != null ? "SET" : "NULL",
+                        gcp.getBucketPrivateKey() != null ? "SET (length=" + gcp.getBucketPrivateKey().length() + ")"
+                                : "NULL",
+                        gcp.getClientEmail() != null ? "SET" : "NULL");
+                return;
+            }
+
             String jsonKey = String.format("{\n" +
                     "  \"type\": \"%s\",\n" +
                     "  \"project_id\": \"%s\",\n" +
@@ -57,17 +70,18 @@ public class GcsService {
                     "  \"client_x509_cert_url\": \"%s\",\n" +
                     "  \"universe_domain\": \"%s\"\n" +
                     "}",
-                    gcp.getType(),
+                    gcp.getType() != null ? gcp.getType() : "service_account",
                     gcp.getProjectId(),
-                    gcp.getBucketPrivateKeyId(),
-                    gcp.getBucketPrivateKey() != null ? gcp.getBucketPrivateKey().replace("\n", "\\n") : "",
+                    gcp.getBucketPrivateKeyId() != null ? gcp.getBucketPrivateKeyId() : "",
+                    gcp.getBucketPrivateKey().replace("\n", "\\n"),
                     gcp.getClientEmail(),
-                    gcp.getClientId(),
-                    gcp.getAuthUri(),
-                    gcp.getTokenUri(),
-                    gcp.getAuthProviderX509CertUrl(),
-                    gcp.getClientX509CertUrl(),
-                    gcp.getUniverseDomain());
+                    gcp.getClientId() != null ? gcp.getClientId() : "",
+                    gcp.getAuthUri() != null ? gcp.getAuthUri() : "https://accounts.google.com/o/oauth2/auth",
+                    gcp.getTokenUri() != null ? gcp.getTokenUri() : "https://oauth2.googleapis.com/token",
+                    gcp.getAuthProviderX509CertUrl() != null ? gcp.getAuthProviderX509CertUrl()
+                            : "https://www.googleapis.com/oauth2/v1/certs",
+                    gcp.getClientX509CertUrl() != null ? gcp.getClientX509CertUrl() : "",
+                    gcp.getUniverseDomain() != null ? gcp.getUniverseDomain() : "googleapis.com");
 
             GoogleCredentials credentials = GoogleCredentials.fromStream(
                     new ByteArrayInputStream(jsonKey.getBytes(StandardCharsets.UTF_8)));
@@ -78,9 +92,11 @@ public class GcsService {
                     .build()
                     .getService();
 
-        } catch (IOException e) {
-            log.error("Failed to initialize GCS Storage", e);
-            throw new RuntimeException("Failed to initialize GCS Storage", e);
+            log.info("GCS Storage initialized successfully for project: {}", gcp.getProjectId());
+
+        } catch (Exception e) {
+            log.error("Failed to initialize GCS Storage: {}", e.getMessage(), e);
+            this.storage = null;
         }
     }
 
@@ -95,6 +111,10 @@ public class GcsService {
 
     public String uploadAdminRecognizedImage(Long adminId, Object filePath, String subdirectory, String fileName,
             String fileExtension) {
+        if (storage == null) {
+            throw new RuntimeException(
+                    "GCS Storage is not initialized. Please check GCP configuration in application.properties");
+        }
         try {
             byte[] imageBuffer;
             String finalFileExtension = fileExtension != null ? fileExtension : ".jpg";
