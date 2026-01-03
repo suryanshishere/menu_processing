@@ -4,6 +4,7 @@ import com.shelfpulse.activation_automation.dto.email.OtpMailData;
 import com.shelfpulse.activation_automation.entity.Admin;
 import com.shelfpulse.activation_automation.enums.MailType;
 import com.shelfpulse.activation_automation.repository.AdminRepository;
+import com.shelfpulse.activation_automation.util.JwtUtil;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -16,35 +17,45 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class AuthService {
 
+    private static final int FORGOT_PASSWORD_OTP_EXPIRY_MINUTES = 10;
+
     private final AdminRepository adminRepository;
     private final MailService mailService;
     private final StringRedisTemplate redisTemplate;
     private final PasswordEncoder passwordEncoder;
+    private final JwtUtil jwtUtil;
 
     public AuthService(AdminRepository adminRepository, MailService mailService, StringRedisTemplate redisTemplate,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
         this.adminRepository = adminRepository;
         this.mailService = mailService;
         this.redisTemplate = redisTemplate;
         this.passwordEncoder = passwordEncoder;
+        this.jwtUtil = jwtUtil;
     }
 
     public Map<String, Object> forgotPassword(String emailOrUsername) {
         Admin admin = adminRepository.findByEmailOrUsername(emailOrUsername, emailOrUsername)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new RuntimeException("Admin not found"));
 
-        String otp = String.format("%04d", new Random().nextInt(10000));
-        String key = "FORGOT_PASSWORD:" + admin.getId(); // Key stored in redis
+        int otp = 100000 + new Random().nextInt(900000);
+        String otpStr = String.valueOf(otp);
+        String otpVerificationHash = passwordEncoder.encode("admin:" + admin.getId() + "_" + otpStr);
 
-        // Save OTP to Redis with expiration (e.g., 10 minutes)
-        redisTemplate.opsForValue().set(key, otp, 10, TimeUnit.MINUTES);
+        String key = "FORGOT_PASSWORD:" + admin.getId();
+        redisTemplate.opsForValue().set(key, otpStr, FORGOT_PASSWORD_OTP_EXPIRY_MINUTES, TimeUnit.MINUTES);
 
-        OtpMailData mailData = new OtpMailData(MailType.RESET_PASSWORD, otp, 10, admin.getUsername());
-        mailService.sendMail(admin.getEmail(), "Password Reset Request", "otpEmailTemplate", mailData, null, null,
-                null);
+        OtpMailData mailData = new OtpMailData(MailType.RESET_PASSWORD, otpStr, FORGOT_PASSWORD_OTP_EXPIRY_MINUTES,
+                admin.getUsername());
+        String emailSubject = "Password Reset OTP: [" + otp + "]";
+        mailService.sendMail(admin.getEmail(), emailSubject, "otpEmailTemplate", mailData, null, null, null);
+
+        String token = jwtUtil.generateToken(admin);
 
         Map<String, Object> response = new HashMap<>();
-        response.put("email", admin.getEmail());
+        response.put("otpVerificationHash", otpVerificationHash);
+        response.put("token", token);
+        response.put("expiryIn", FORGOT_PASSWORD_OTP_EXPIRY_MINUTES);
         return response;
     }
 

@@ -58,10 +58,10 @@ public class AuthController {
 
         try {
             Map<String, Object> data = authService.forgotPassword(usernameOrEmail);
-            return ResponseEntity.ok(Map.of(
-                    "status", true,
-                    "message", "OTP sent to email!",
-                    "email", data.get("email")));
+            Map<String, Object> response = new HashMap<>(data);
+            response.put("status", true);
+            response.put("message", "OTP sent to email!");
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(
                     Map.of("status", false, "message", e.getMessage() != null ? e.getMessage() : "Unexpected error"));
