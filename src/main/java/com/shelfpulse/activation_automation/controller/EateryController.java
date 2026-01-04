@@ -121,8 +121,8 @@ public class EateryController {
         }
     }
 
-    @PatchMapping(value = "/update_eatery/{eateryId}", consumes = "multipart/form-data")
-    public ResponseEntity<?> updateEatery(
+    @PatchMapping(value = "/update_eatery/{eateryId}", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> updateEateryMultipart(
             @PathVariable Integer eateryId,
             @RequestParam(value = "eateryImage", required = false) MultipartFile eateryImage,
             @RequestParam(value = "eateryLogoImage", required = false) MultipartFile eateryLogoImage,
@@ -131,6 +131,22 @@ public class EateryController {
         try {
             Integer adminId = getAdminIdFromAuth();
             Eatery eatery = eateryService.updateEatery(eateryId, request, adminId, eateryImage, eateryLogoImage);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Eatery updated successfully!",
+                    "data", eatery));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PatchMapping(value = "/update_eatery/{eateryId}", consumes = org.springframework.http.MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> updateEateryJson(
+            @PathVariable Integer eateryId,
+            @Valid @RequestBody EateryDto.UpdateRequest request) {
+
+        try {
+            Integer adminId = getAdminIdFromAuth();
+            Eatery eatery = eateryService.updateEatery(eateryId, request, adminId, null, null);
             return ResponseEntity.ok(Map.of(
                     "message", "Eatery updated successfully!",
                     "data", eatery));
