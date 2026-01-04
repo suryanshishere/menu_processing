@@ -20,14 +20,14 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String idStr) throws UsernameNotFoundException {
-        // Our JWT Subject is Admin ID (Integer)
         Integer id = Integer.parseInt(idStr);
         Admin admin = adminRepository.findById(id)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with id: " + id));
 
-        return new org.springframework.security.core.userdetails.User(
-                String.valueOf(admin.getId()), // "Username" for Spring Security is our ID
+        return new AdminUserDetails(
+                String.valueOf(admin.getId()),
                 admin.getPassword(),
-                new ArrayList<>());
+                new ArrayList<>(),
+                admin.getUserType());
     }
 }

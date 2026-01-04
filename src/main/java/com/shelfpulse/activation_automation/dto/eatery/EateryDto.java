@@ -308,7 +308,10 @@ public class EateryDto {
 
         private String search;
 
+        @Pattern(regexp = "^(creationDate|name)$", message = "sortBy must be either 'creationDate' or 'name'")
         private String sortBy = "creationDate";
+
+        @Pattern(regexp = "^(asc|desc)$", message = "sortOrder must be either 'asc' or 'desc'")
         private String sortOrder = "desc";
 
         public Integer getPage() {

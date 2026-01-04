@@ -186,6 +186,9 @@ public class EateryService {
     }
 
     public Page<Eatery> getAllEateries(EateryDto.GetAllRequest request, Integer adminId, UserType userType) {
+        log.debug("getAllEateries called - adminId: {}, userType: {}, search: '{}'", adminId, userType,
+                request.getSearch());
+
         int page = (request.getPage() != null && request.getPage() > 0) ? request.getPage() - 1 : 0;
         int limit = (request.getLimit() != null && request.getLimit() > 0) ? request.getLimit() : 10;
 
@@ -206,10 +209,15 @@ public class EateryService {
                 predicates.add(cb.equal(root.get("admin").get("id"), adminId));
             }
 
-            // Search
+            // Search - split by spaces and match each term (AND logic)
             if (StringUtils.hasText(request.getSearch())) {
-                String searchTerm = "%" + request.getSearch().trim().toLowerCase() + "%";
-                predicates.add(cb.like(cb.lower(root.get("name")), searchTerm));
+                String[] searchTerms = request.getSearch().trim().split("\\s+");
+                for (String term : searchTerms) {
+                    if (!term.isEmpty()) {
+                        String pattern = "%" + term.toLowerCase() + "%";
+                        predicates.add(cb.like(cb.lower(root.get("name")), pattern));
+                    }
+                }
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

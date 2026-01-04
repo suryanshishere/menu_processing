@@ -7,8 +7,6 @@ import com.shelfpulse.activation_automation.service.EateryService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -17,26 +15,12 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/eatery")
-public class EateryController {
+public class EateryController extends BaseController {
 
     private final EateryService eateryService;
 
     public EateryController(EateryService eateryService) {
         this.eateryService = eateryService;
-    }
-
-    private Integer getAdminIdFromAuth() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return Integer.parseInt(auth.getName());
-    }
-
-    private UserType getUserTypeFromAuth() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object userTypeObj = auth.getCredentials();
-        if (userTypeObj instanceof UserType) {
-            return (UserType) userTypeObj;
-        }
-        return UserType.ADMIN;
     }
 
     @PostMapping(value = "/create_eatery", consumes = "multipart/form-data")
