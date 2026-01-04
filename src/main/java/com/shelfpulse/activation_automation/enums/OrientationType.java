@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum OrientationType {
+public enum OrientationType implements PersistableEnum<String> {
     LANDSCAPE("landscape"),
     PORTRAIT("portrait");
 

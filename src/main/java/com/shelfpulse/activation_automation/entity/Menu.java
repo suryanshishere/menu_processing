@@ -36,7 +36,6 @@ public class Menu {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private MenuStatus status = MenuStatus.PROCESSING;
 
@@ -59,7 +58,6 @@ public class Menu {
     @Column(name = "template_img_urls", nullable = false)
     private List<String> templateImgUrls = new ArrayList<>();
 
-    @Enumerated(EnumType.STRING)
     @Column(name = "template_type")
     private TemplateType templateType;
 

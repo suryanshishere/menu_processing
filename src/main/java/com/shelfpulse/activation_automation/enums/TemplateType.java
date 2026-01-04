@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum TemplateType {
+public enum TemplateType implements PersistableEnum<String> {
     SPIRAL("spiral"),
     CARD("card"),
     WALL("wall");

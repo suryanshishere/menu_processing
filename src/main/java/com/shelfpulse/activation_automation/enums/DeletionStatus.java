@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum DeletionStatus {
+public enum DeletionStatus implements PersistableEnum<String> {
     ACTIVE("active"),
     INACTIVE("inactive");
 

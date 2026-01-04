@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum TokenType {
+public enum TokenType implements PersistableEnum<String> {
     ACCESS("access"),
     REFRESH("refresh");
 

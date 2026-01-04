@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum MenuStatus {
+public enum MenuStatus implements PersistableEnum<String> {
     PROCESSING("processing"),
     GENERATED("generated"),
     COMPLETED("completed"),

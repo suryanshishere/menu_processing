@@ -54,16 +54,16 @@ public class EateryService {
             throw new Exception("Admin not found with ID: " + adminId);
         }
 
+        if (eateryRepository.existsBySaamnaId(request.getSaamnaId())) {
+            throw new Exception("An eatery with this SAAMNA ID already exists.");
+        }
+
         Eatery eatery = new Eatery();
         BeanUtils.copyProperties(request, eatery);
         eatery.setAdmin(adminOpt.get());
         eatery.setStatus(MenuStatus.COMPLETED);
 
-        try {
-            eatery = eateryRepository.save(eatery);
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            throw new Exception("An eatery with this SAAMNA ID already exists.");
-        }
+        eatery = eateryRepository.save(eatery);
 
         boolean updated = false;
         if (eateryImage != null && !eateryImage.isEmpty()) {

@@ -55,7 +55,6 @@ public class Eatery {
     @Column(name = "website_link")
     private String websiteLink;
 
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private MenuStatus status = MenuStatus.COMPLETED;
 

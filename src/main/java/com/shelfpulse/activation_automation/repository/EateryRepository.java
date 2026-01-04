@@ -17,4 +17,6 @@ public interface EateryRepository extends JpaRepository<Eatery, Integer>, JpaSpe
 
     @Query("SELECT COUNT(e) FROM Eatery e WHERE e.status <> :status")
     long countByStatusNot(@Param("status") MenuStatus status);
+
+    boolean existsBySaamnaId(String saamnaId);
 }

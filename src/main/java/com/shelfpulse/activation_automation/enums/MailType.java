@@ -2,7 +2,7 @@ package com.shelfpulse.activation_automation.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-public enum MailType {
+public enum MailType implements PersistableEnum<String> {
     RESET_PASSWORD("reset_password"),
     PROFILE_UPDATE("profile_update");
 
