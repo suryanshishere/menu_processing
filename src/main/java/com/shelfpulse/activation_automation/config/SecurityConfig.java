@@ -23,10 +23,14 @@ public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final com.shelfpulse.activation_automation.security.AiBackendAuthenticationFilter aiBackendAuthFilter;
 
-    public SecurityConfig(CustomUserDetailsService userDetailsService, JwtAuthenticationFilter jwtAuthFilter) {
+    public SecurityConfig(CustomUserDetailsService userDetailsService,
+            JwtAuthenticationFilter jwtAuthFilter,
+            com.shelfpulse.activation_automation.security.AiBackendAuthenticationFilter aiBackendAuthFilter) {
         this.userDetailsService = userDetailsService;
         this.jwtAuthFilter = jwtAuthFilter;
+        this.aiBackendAuthFilter = aiBackendAuthFilter;
     }
 
     @Bean
@@ -35,9 +39,11 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/forget_password").permitAll()
+                        .requestMatchers("/menu/processed_menu").permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())
+                .addFilterBefore(aiBackendAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
