@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SocketIOConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SocketIOConfig.class);
-    private static final int MAX_CONNECTIONS = 25;
+    private static final int MAX_CONNECTIONS = 500;
 
     private final JwtUtil jwtUtil;
     private final AtomicInteger connectionCount = new AtomicInteger(0);
@@ -45,7 +45,7 @@ public class SocketIOConfig {
         EngineIoServerOptions options = EngineIoServerOptions.newFromDefault();
         options.setAllowedCorsOrigins(allowedOrigins.equals("*") ? null : allowedOrigins.split(","));
         options.setPingTimeout(60000);
-        options.setPingInterval(25000);
+        options.setPingInterval(10000); // Lower to 10s to match Node.js
         return new EngineIoServer(options);
     }
 
@@ -65,7 +65,7 @@ public class SocketIOConfig {
 
             if (connectionCount.get() >= MAX_CONNECTIONS) {
                 log.warn("Max connections reached. Rejecting socket: {}", socket.getId());
-                socket.send("error", "Server is full. Max connections: " + MAX_CONNECTIONS);
+                socket.send("error", "Server is currently full.");
                 socket.disconnect(true);
                 return;
             }
@@ -80,23 +80,23 @@ public class SocketIOConfig {
                 socketRooms.put(socket.getId(), new HashSet<>());
                 connectionCount.incrementAndGet();
 
-                joinRoom(socket.getId(), "admin_" + adminId);
-                socket.joinRoom("admin_" + adminId);
+                // Join organization room: org:{adminId}
+                String orgRoom = "org:" + adminId;
+                joinRoom(socket.getId(), orgRoom);
+                socket.joinRoom(orgRoom);
                 log.info("Socket.IO client connected: {} (adminId: {})", socket.getId(), adminId);
-                socket.send("connected", Map.of("sessionId", socket.getId(), "adminId", adminId));
+                // Node code doesn't explicitly send "connected" event but it's fine to keep or
+                // remove. Keeping minimal.
 
                 socket.on("join:eatery:menu:process", roomArgs -> {
                     Object arg = roomArgs[0];
-                    log.info("EVENT join:eatery:menu:process RECEIVED. Arg type: {} val: {}",
-                            arg != null ? arg.getClass().getName() : "null", arg);
-
                     String roomName = null;
                     try {
                         if (arg instanceof org.json.JSONObject) {
                             org.json.JSONObject json = (org.json.JSONObject) arg;
                             if (json.has("eateryId")) {
                                 long eateryId = json.getLong("eateryId");
-                                roomName = "eatery_" + adminId + "_" + eateryId;
+                                roomName = "org:" + adminId + ":eatery:" + eateryId;
                             }
                         } else if (arg instanceof Map) {
                             @SuppressWarnings("unchecked")
@@ -105,34 +105,61 @@ public class SocketIOConfig {
                                 Object eateryIdObj = roomData.get("eateryId");
                                 Long eateryId = eateryIdObj instanceof Number ? ((Number) eateryIdObj).longValue()
                                         : Long.parseLong(eateryIdObj.toString());
-                                roomName = "eatery_" + adminId + "_" + eateryId;
+                                roomName = "org:" + adminId + ":eatery:" + eateryId;
+                            }
+                        } else if (arg instanceof String) {
+                            // Handle string JSON payload if necessary, similar to Node's JSON.parse
+                            try {
+                                org.json.JSONObject json = new org.json.JSONObject((String) arg);
+                                if (json.has("eateryId")) {
+                                    long eateryId = json.getLong("eateryId");
+                                    roomName = "org:" + adminId + ":eatery:" + eateryId;
+                                }
+                            } catch (Exception ignored) {
                             }
                         }
 
-                        if (roomName == null) {
-                            roomName = arg != null ? arg.toString() : "null_room";
+                        if (roomName != null) {
+                            socket.joinRoom(roomName);
+                            joinRoom(socket.getId(), roomName);
+                            log.info("Client {} joined room: {}", socket.getId(), roomName);
+                        } else {
+                            log.warn("'join:eatery:menu:process' missing eateryId or invalid payload: {}", arg);
                         }
                     } catch (Exception e) {
                         log.error("Error parsing join payload", e);
-                        roomName = arg != null ? arg.toString() : "error_room";
                     }
-
-                    socket.joinRoom(roomName);
-                    joinRoom(socket.getId(), roomName);
-                    log.info("Client {} joined room: {}", socket.getId(), roomName);
                 });
 
-                // Fallback listener for plain 'join_room' just in case
-                socket.on("join_room", roomArgs -> {
+                socket.on("leave:eatery:menu:process", roomArgs -> {
                     Object arg = roomArgs[0];
-                    log.info("EVENT join_room RECEIVED. Arg: {}", arg);
-                });
+                    String roomName = null;
+                    try {
+                        if (arg instanceof org.json.JSONObject) {
+                            org.json.JSONObject json = (org.json.JSONObject) arg;
+                            if (json.has("eateryId")) {
+                                long eateryId = json.getLong("eateryId");
+                                roomName = "org:" + adminId + ":eatery:" + eateryId;
+                            }
+                        } else if (arg instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> roomData = (Map<String, Object>) arg;
+                            if (roomData.containsKey("eateryId")) {
+                                Object eateryIdObj = roomData.get("eateryId");
+                                Long eateryId = eateryIdObj instanceof Number ? ((Number) eateryIdObj).longValue()
+                                        : Long.parseLong(eateryIdObj.toString());
+                                roomName = "org:" + adminId + ":eatery:" + eateryId;
+                            }
+                        }
 
-                socket.on("leave_room", roomArgs -> {
-                    String roomName = (String) roomArgs[0];
-                    socket.leaveRoom(roomName);
-                    leaveRoom(socket.getId(), roomName);
-                    log.debug("Client {} left room: {}", socket.getId(), roomName);
+                        if (roomName != null) {
+                            socket.leaveRoom(roomName);
+                            leaveRoom(socket.getId(), roomName);
+                            log.debug("Client {} left room: {}", socket.getId(), roomName);
+                        }
+                    } catch (Exception e) {
+                        log.error("Error parsing leave payload", e);
+                    }
                 });
 
                 socket.on("message", msgArgs -> {
@@ -155,16 +182,13 @@ public class SocketIOConfig {
                     connectionCount.decrementAndGet();
                     log.info("Socket.IO client disconnected: {} (adminId: {})", socket.getId(), adminId);
                 });
-                socket.on("ping", pingArgs -> {
-                    log.info("PING RECEIVED from socket {}", socket.getId());
-                    socket.send("pong", "pong");
-                });
             } else {
                 log.warn("Socket connection rejected - invalid auth: {}", socket.getId());
                 socket.send("error", "Authentication failed");
                 socket.disconnect(true);
             }
         });
+
     }
 
     private void joinRoom(String socketId, String room) {

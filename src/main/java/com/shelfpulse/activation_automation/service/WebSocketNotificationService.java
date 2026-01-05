@@ -12,21 +12,44 @@ public class WebSocketNotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(WebSocketNotificationService.class);
     private final SocketIORedisAdapter socketIORedisAdapter;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
-    public WebSocketNotificationService(SocketIORedisAdapter socketIORedisAdapter) {
+    public WebSocketNotificationService(SocketIORedisAdapter socketIORedisAdapter,
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.socketIORedisAdapter = socketIORedisAdapter;
+        this.objectMapper = objectMapper;
     }
 
     public void notifyMenuProcessingStatus(Long adminId, Long eateryId, MenuProcessingStatusDto data) {
         String room = buildEateryRoom(adminId, eateryId);
         log.info("📢 Emitting 'menu:processing:status' to room {}", room);
-        socketIORedisAdapter.publishToRoom(room, "menu:processing:status", data);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = objectMapper.convertValue(data, Map.class);
+            org.json.JSONObject jsonObject = new org.json.JSONObject(map);
+            socketIORedisAdapter.publishToRoom(room, "menu:processing:status", jsonObject);
+        } catch (Exception e) {
+            log.error("Failed to convert message data to JSONObject", e);
+        }
     }
 
     public void notifyEateryRoom(Long adminId, Long eateryId, String eventType, Object data) {
         String room = buildEateryRoom(adminId, eateryId);
         log.info("📢 Emitting '{}' to room {}", eventType, room);
-        socketIORedisAdapter.publishToRoom(room, eventType, data);
+        try {
+            Object payload = data;
+            if (data instanceof Map) {
+                payload = new org.json.JSONObject((Map<?, ?>) data);
+            } else if (!(data instanceof String) && !(data instanceof Number) && !(data instanceof Boolean)
+                    && !(data instanceof org.json.JSONObject)) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = objectMapper.convertValue(data, Map.class);
+                payload = new org.json.JSONObject(map);
+            }
+            socketIORedisAdapter.publishToRoom(room, eventType, payload);
+        } catch (Exception e) {
+            log.error("Failed to convert message data to JSONObject", e);
+        }
     }
 
     public void notifyOrganization(Long adminId, String eventType, Object data) {
@@ -46,6 +69,6 @@ public class WebSocketNotificationService {
     }
 
     private String buildEateryRoom(Long adminId, Long eateryId) {
-        return "eatery_" + adminId + "_" + eateryId;
+        return "org:" + adminId + ":eatery:" + eateryId;
     }
 }
