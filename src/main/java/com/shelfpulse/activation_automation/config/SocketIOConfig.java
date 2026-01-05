@@ -85,11 +85,47 @@ public class SocketIOConfig {
                 log.info("Socket.IO client connected: {} (adminId: {})", socket.getId(), adminId);
                 socket.send("connected", Map.of("sessionId", socket.getId(), "adminId", adminId));
 
-                socket.on("join_room", roomArgs -> {
-                    String roomName = (String) roomArgs[0];
+                socket.on("join:eatery:menu:process", roomArgs -> {
+                    Object arg = roomArgs[0];
+                    log.info("EVENT join:eatery:menu:process RECEIVED. Arg type: {} val: {}",
+                            arg != null ? arg.getClass().getName() : "null", arg);
+
+                    String roomName = null;
+                    try {
+                        if (arg instanceof org.json.JSONObject) {
+                            org.json.JSONObject json = (org.json.JSONObject) arg;
+                            if (json.has("eateryId")) {
+                                long eateryId = json.getLong("eateryId");
+                                roomName = "eatery_" + adminId + "_" + eateryId;
+                            }
+                        } else if (arg instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> roomData = (Map<String, Object>) arg;
+                            if (roomData.containsKey("eateryId")) {
+                                Object eateryIdObj = roomData.get("eateryId");
+                                Long eateryId = eateryIdObj instanceof Number ? ((Number) eateryIdObj).longValue()
+                                        : Long.parseLong(eateryIdObj.toString());
+                                roomName = "eatery_" + adminId + "_" + eateryId;
+                            }
+                        }
+
+                        if (roomName == null) {
+                            roomName = arg != null ? arg.toString() : "null_room";
+                        }
+                    } catch (Exception e) {
+                        log.error("Error parsing join payload", e);
+                        roomName = arg != null ? arg.toString() : "error_room";
+                    }
+
                     socket.joinRoom(roomName);
                     joinRoom(socket.getId(), roomName);
-                    log.debug("Client {} joined room: {}", socket.getId(), roomName);
+                    log.info("Client {} joined room: {}", socket.getId(), roomName);
+                });
+
+                // Fallback listener for plain 'join_room' just in case
+                socket.on("join_room", roomArgs -> {
+                    Object arg = roomArgs[0];
+                    log.info("EVENT join_room RECEIVED. Arg: {}", arg);
                 });
 
                 socket.on("leave_room", roomArgs -> {
@@ -118,6 +154,10 @@ public class SocketIOConfig {
                     }
                     connectionCount.decrementAndGet();
                     log.info("Socket.IO client disconnected: {} (adminId: {})", socket.getId(), adminId);
+                });
+                socket.on("ping", pingArgs -> {
+                    log.info("PING RECEIVED from socket {}", socket.getId());
+                    socket.send("pong", "pong");
                 });
             } else {
                 log.warn("Socket connection rejected - invalid auth: {}", socket.getId());

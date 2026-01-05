@@ -146,7 +146,6 @@ public class EngineIoWebSocketConfig {
             session.addMessageHandler(new MessageHandler.Whole<String>() {
                 @Override
                 public void onMessage(String message) {
-                    engineIoServer.handleWebSocket(webSocket);
                     webSocket.emit("message", message);
                 }
             });
