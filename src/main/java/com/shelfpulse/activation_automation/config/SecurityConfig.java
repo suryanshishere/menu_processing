@@ -40,6 +40,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/forget_password").permitAll()
                         .requestMatchers("/menu/processed_menu").permitAll()
+                        .requestMatchers("/ws/**", "/ws-sockjs/**").permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())
