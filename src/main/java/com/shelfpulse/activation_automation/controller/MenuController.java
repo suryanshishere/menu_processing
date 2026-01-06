@@ -24,23 +24,27 @@ public class MenuController extends BaseController {
     }
 
     @PostMapping("/processed_menu")
-    public ResponseEntity<?> processMenu(@Valid @RequestBody MenuDto.ProcessedMenuRequest request) {
+    public ResponseEntity<?> processMenu(@RequestBody Map<String, Object> requestBody) {
         try {
-            List<String> jsonUrls = request.getJsonUrls();
-
+            @SuppressWarnings("unchecked")
+            List<String> jsonUrls = (List<String>) requestBody.get("jsonUrls");
+            // 1. Validate the incoming request
             if (jsonUrls == null || jsonUrls.isEmpty()) {
                 return ResponseEntity.status(400).body(Map.of(
                         "status", false,
                         "message", "Request body must include a non-empty 'jsonUrls' array."));
             }
 
+            // 2. Process
             menuService.processMenu(jsonUrls);
 
+            // 5. Respond to the original client
             return ResponseEntity.status(200).body(Map.of(
                     "status", true,
                     "message", "Menu processing initiated successfully."));
 
         } catch (Exception e) {
+            // 6. Catch errors
             return ResponseEntity.status(200).body(Map.of(
                     "status", false,
                     "message", "Menu processing initiated successfully."));
