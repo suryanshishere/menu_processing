@@ -998,7 +998,7 @@ public class MenuService {
                 (long) adminId, (long) eateryId,
                 MenuProcessingStatusDto.builder()
                         .eateryId((long) eateryId)
-                        .status(MenuStatus.COMPLETED)
+                        .status(MenuStatus.GENERATED)
                         .message("Menu for eatery " + eateryId + " has been successfully processed.")
                         .dataJsonUrl(dataJsonUrl)
                         .templateId(templateId)
