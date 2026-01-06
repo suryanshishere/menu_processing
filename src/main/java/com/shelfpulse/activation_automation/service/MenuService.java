@@ -53,13 +53,13 @@ public class MenuService {
     private final HttpClient httpClient;
 
     public MenuService(MenuRepository menuRepository,
-                       EateryRepository eateryRepository,
-                       AdminRepository adminRepository,
-                       GcsService gcsService,
-                       WebSocketNotificationService webSocketNotificationService,
-                       ApplicationProperties applicationProperties,
-                       AdminService adminService,
-                       ObjectMapper objectMapper) {
+            EateryRepository eateryRepository,
+            AdminRepository adminRepository,
+            GcsService gcsService,
+            WebSocketNotificationService webSocketNotificationService,
+            ApplicationProperties applicationProperties,
+            AdminService adminService,
+            ObjectMapper objectMapper) {
         this.menuRepository = menuRepository;
         this.eateryRepository = eateryRepository;
         this.adminRepository = adminRepository;
@@ -72,7 +72,8 @@ public class MenuService {
     }
 
     @Transactional
-    public Menu uploadMenuImages(Integer eateryId, Integer adminId, UserType userType, List<MultipartFile> menuImages)
+    public Menu uploadMenuImages(Integer eateryId, Integer adminId, UserType userType, List<MultipartFile> menuImages,
+            List<MenuDto.MenuImageInfo> menuImageInfos)
             throws Exception {
         Optional<Eatery> eateryOpt = eateryRepository.findById(eateryId);
         if (eateryOpt.isEmpty()) {
@@ -99,7 +100,7 @@ public class MenuService {
             throw new Exception("Admin not found.");
         }
 
-        List<String> imageUrls = uploadImagesAndGetUrls(menuImages, adminId, eateryId);
+        List<String> imageUrls = uploadImagesAndGetUrls(menuImages, menuImageInfos, adminId, eateryId);
         if (imageUrls.isEmpty()) {
             throw new Exception("Image upload failed, no URLs returned.");
         }
@@ -127,28 +128,45 @@ public class MenuService {
         return newMenu;
     }
 
-    private List<String> uploadImagesAndGetUrls(List<MultipartFile> files, Integer adminId, Integer eateryId)
+    private List<String> uploadImagesAndGetUrls(List<MultipartFile> files, List<MenuDto.MenuImageInfo> infos,
+            Integer adminId, Integer eateryId)
             throws Exception {
         List<String> imageUrls = new ArrayList<>();
+        boolean hasValidInfo = infos != null && infos.size() == files.size();
 
-        for (MultipartFile file : files) {
+        if (hasValidInfo) {
+            log.info("✔️ Menu image info provided. Applying custom filenames.");
+        } else {
+            log.info("⚠️ Menu image info not provided. Uploading with default filenames.");
+        }
+
+        for (int i = 0; i < files.size(); i++) {
+            MultipartFile file = files.get(i);
             if (file.isEmpty())
                 continue;
 
             String originalFilename = file.getOriginalFilename();
             String ext = getExtension(originalFilename);
             String path = String.format("%d/menuImages", eateryId);
+            String fileNameToUse = originalFilename;
+
+            if (hasValidInfo) {
+                MenuDto.MenuImageInfo info = infos.get(i);
+                if (info.getId() != null && info.getSide() != null) {
+                    fileNameToUse = String.format("%s_%s%s", info.getId(), info.getSide(), ext);
+                }
+            }
 
             try {
                 String url = gcsService.uploadAdminRecognizedImage(
                         Long.valueOf(adminId),
                         file.getBytes(),
                         path,
-                        originalFilename,
+                        fileNameToUse,
                         ext);
                 imageUrls.add(url);
             } catch (Exception e) {
-                log.error("Failed to upload menu image {}: {}", originalFilename, e.getMessage());
+                log.error("Failed to upload menu image {}: {}", fileNameToUse, e.getMessage());
                 throw new Exception("Failed to upload menu image: " + e.getMessage());
             }
         }
@@ -177,7 +195,8 @@ public class MenuService {
     }
 
     private void triggerAiMenuProcessing(Integer adminId, Integer eateryId) throws Exception {
-        String bucketFolderLink = String.format("gs://shelfex-cdn/automation-activation/%d/%d/menuImages", adminId, eateryId);
+        String bucketFolderLink = String.format("gs://shelfex-cdn/automation-activation/%d/%d/menuImages", adminId,
+                eateryId);
         String url = applicationProperties.getAiBackendUrl() + "/process_menu_folder";
 
         Map<String, String> payload = new HashMap<>();
@@ -192,15 +211,16 @@ public class MenuService {
                 .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        
+
         if (response.statusCode() == 200) {
-            Map<String, Object> respMap = objectMapper.readValue(response.body(), new TypeReference<>() {});
+            Map<String, Object> respMap = objectMapper.readValue(response.body(), new TypeReference<>() {
+            });
             if ("processing".equals(respMap.get("status"))) {
                 return;
             }
             throw new Exception("AI backend status: " + respMap.get("status"));
         } else {
-             throw new Exception("AI backend failed with status: " + response.statusCode());
+            throw new Exception("AI backend failed with status: " + response.statusCode());
         }
     }
 
@@ -210,19 +230,19 @@ public class MenuService {
             log.error("processMenu called with no JSON URLs. Aborting.");
             return;
         }
-        
+
         log.info("AI provided json urls: {}", jsonUrls);
 
         int[] ids;
         try {
-             ids = extractIdsFromUrl(jsonUrls.get(0));
+            ids = extractIdsFromUrl(jsonUrls.get(0));
         } catch (Exception e) {
             log.error("Failed to extract IDs from URL: {}", e.getMessage());
-            return; 
+            return;
         }
         int adminId = ids[0];
         int eateryId = ids[1];
-        
+
         Integer menuIdForErrorHandling = null;
 
         try {
@@ -232,15 +252,16 @@ public class MenuService {
             }
 
             log.info("[Eatery: {}] Starting menu processing transaction...", eateryId);
-            
+
             Map<String, Object> result = runProcessingTransaction(eateryId, adminId, jsonUrls, metadata);
             menuIdForErrorHandling = (Integer) result.get("templateId");
-            
+
             log.info("[Eatery: {}] Transaction completed successfully.", eateryId);
 
             if (result.get("flatDataJsonUrl") != null) {
-                 log.info("Sending notifications for eateryId: {}", eateryId);
-                 sendNotifications(adminId, eateryId, (String) result.get("flatDataJsonUrl"), (long)menuIdForErrorHandling);
+                log.info("Sending notifications for eateryId: {}", eateryId);
+                sendNotifications(adminId, eateryId, (String) result.get("flatDataJsonUrl"),
+                        (long) menuIdForErrorHandling);
             }
 
         } catch (Exception error) {
@@ -248,18 +269,19 @@ public class MenuService {
             log.error("[Eatery: {}] Processing failed: {}", eateryId, specificErrorMessage);
 
             if (error.getMessage().contains("resulted in empty data") && menuIdForErrorHandling != null) {
-                 log.error("[MenuId: {}] No data was structured. Marking process as failed.", menuIdForErrorHandling);
-                 try {
-                     updateMenuStatus(menuIdForErrorHandling, MenuStatus.FAILED);
-                 } catch (Exception e) {
-                     log.error("Failed to update menu status to FAILED: {}", e.getMessage());
-                 }
+                log.error("[MenuId: {}] No data was structured. Marking process as failed.", menuIdForErrorHandling);
+                try {
+                    updateMenuStatus(menuIdForErrorHandling, MenuStatus.FAILED);
+                } catch (Exception e) {
+                    log.error("Failed to update menu status to FAILED: {}", e.getMessage());
+                }
             }
         }
     }
 
     @Transactional
-    public Map<String, Object> runProcessingTransaction(int eateryId, int adminId, List<String> jsonUrls, ParsingDtos.MenuJsonData metadata) throws Exception {
+    public Map<String, Object> runProcessingTransaction(int eateryId, int adminId, List<String> jsonUrls,
+            ParsingDtos.MenuJsonData metadata) throws Exception {
         Optional<Menu> menuOpt = menuRepository.findFirstByEateryIdOrderByCreatedAtDesc(eateryId);
         if (menuOpt.isEmpty() || menuOpt.get().getStatus() == MenuStatus.FAILED) {
             throw new Exception("[MenuId: N/A] Aborting. Menu record not found or status is 'failed'.");
@@ -268,20 +290,23 @@ public class MenuService {
 
         Eatery eatery = eateryRepository.findById(eateryId).orElse(null);
         String eateryName = eatery != null ? eatery.getName() : "";
-        List<ComboImage> comboImages = adminService.getAllInfoComboImages(); 
+        List<ComboImage> comboImages = adminService.getAllInfoComboImages();
 
-        Map<String, Object> prepared = fetchAndPrepareMenus(jsonUrls, menuData.getRawMenuImgUrls() != null ? menuData.getRawMenuImgUrls() : Collections.emptyList());
-        
+        Map<String, Object> prepared = fetchAndPrepareMenus(jsonUrls,
+                menuData.getRawMenuImgUrls() != null ? menuData.getRawMenuImgUrls() : Collections.emptyList());
+
         @SuppressWarnings("unchecked")
         List<String> sortedJsonUrls = (List<String>) prepared.get("sortedJsonUrls");
         @SuppressWarnings("unchecked")
         List<ParsingDtos.MenuContent> menusToMerge = (List<ParsingDtos.MenuContent>) prepared.get("menusToMerge");
 
         OrientationType majorityOrientation = getMajorityOrientation(sortedJsonUrls, metadata);
-        
-        StructuredMenuDtos.StructuredMenu flatData = structureMenuPages(sortedJsonUrls, menusToMerge, comboImages, majorityOrientation, metadata, menuData.getRawMenuImgUrls(), eateryName);
 
-        boolean hasData = flatData.getPages().values().stream().anyMatch(p -> p.getData() != null && !p.getData().isEmpty());
+        StructuredMenuDtos.StructuredMenu flatData = structureMenuPages(sortedJsonUrls, menusToMerge, comboImages,
+                majorityOrientation, metadata, menuData.getRawMenuImgUrls(), eateryName);
+
+        boolean hasData = flatData.getPages().values().stream()
+                .anyMatch(p -> p.getData() != null && !p.getData().isEmpty());
         if (!hasData) {
             throw new Exception("Menu structuring resulted in empty data; process failed.");
         }
@@ -290,12 +315,30 @@ public class MenuService {
 
         menuData.setStatus(MenuStatus.GENERATED);
         List<String> workingUrls = menuData.getWorkingDataJsonUrls();
-        if (workingUrls == null) workingUrls = new ArrayList<>();
+        if (workingUrls == null)
+            workingUrls = new ArrayList<>();
         workingUrls.add(flatDataJsonUrl);
+
+        // Keep only the last 10 URLs, soft-delete the rest from GCS
+        if (workingUrls.size() > 10) {
+            List<String> urlsToDelete = new ArrayList<>(workingUrls.subList(0, workingUrls.size() - 10));
+            workingUrls.subList(0, workingUrls.size() - 10).clear();
+
+            // Async soft delete - move to /deleted/ folder in GCS
+            if (!urlsToDelete.isEmpty()) {
+                try {
+                    gcsService.softDeleteGCSFile(urlsToDelete);
+                    log.info("Soft-deleted {} old working JSON URLs", urlsToDelete.size());
+                } catch (Exception e) {
+                    log.error("Failed to soft-delete old working URLs: {}", e.getMessage());
+                }
+            }
+        }
+
         menuData.setWorkingDataJsonUrls(workingUrls);
-        
+
         menuRepository.save(menuData);
-        
+
         if (eatery != null) {
             eatery.setStatus(MenuStatus.GENERATED);
             eatery.setMenusCreated((eatery.getMenusCreated() == null ? 0 : eatery.getMenusCreated()) + 1);
@@ -312,10 +355,11 @@ public class MenuService {
 
     private ParsingDtos.MenuJsonData fetchMetadata(int adminId, int eateryId) {
         try {
-            String metadataUrl = String.format("%s/%d/%d/menuImages/processing_metadata.json", 
-                    applicationProperties.getDefaultGcsUrl(), adminId, eateryId); 
-            
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(metadataUrl + "?ts=" + System.currentTimeMillis())).GET().build();
+            String metadataUrl = String.format("%s/%d/%d/menuImages/processing_metadata.json",
+                    applicationProperties.getDefaultGcsUrl(), adminId, eateryId);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(metadataUrl + "?ts=" + System.currentTimeMillis())).GET().build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
@@ -352,13 +396,13 @@ public class MenuService {
             res.put("menusToMerge", new ArrayList<>());
             return res;
         }
-        
+
         List<ParsingDtos.MenuContent> menusToMerge = new ArrayList<>();
         for (String url : sortedJsonUrls) {
-             HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
-             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-             ParsingDtos.MenuContent content = objectMapper.readValue(response.body(), ParsingDtos.MenuContent.class);
-             menusToMerge.add(content);
+            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            ParsingDtos.MenuContent content = objectMapper.readValue(response.body(), ParsingDtos.MenuContent.class);
+            menusToMerge.add(content);
         }
 
         Map<String, Object> res = new HashMap<>();
@@ -369,7 +413,8 @@ public class MenuService {
 
     private OrientationType getMajorityOrientation(List<String> jsonUrls, ParsingDtos.MenuJsonData metadata) {
         Map<String, ParsingDtos.ProcessedFile> processedFiles = metadata.getProcessedFiles();
-        if (processedFiles == null || jsonUrls == null || jsonUrls.isEmpty()) return null;
+        if (processedFiles == null || jsonUrls == null || jsonUrls.isEmpty())
+            return null;
 
         Map<String, ParsingDtos.OrientationInfo> nameToOrientationMap = new HashMap<>();
         for (Map.Entry<String, ParsingDtos.ProcessedFile> entry : processedFiles.entrySet()) {
@@ -384,57 +429,124 @@ public class MenuService {
             String jsonName = Paths.get(URI.create(url).getPath()).getFileName().toString().replace("_menu.json", "");
             ParsingDtos.OrientationInfo info = nameToOrientationMap.get(jsonName);
             if (info != null) {
-                String orientation = info.getCorrectedOrientation() != null ? info.getCorrectedOrientation() : info.getOriginalOrientation();
+                String orientation = info.getCorrectedOrientation() != null ? info.getCorrectedOrientation()
+                        : info.getOriginalOrientation();
                 if (orientation != null) {
                     orientationCounts.put(orientation, orientationCounts.getOrDefault(orientation, 0) + 1);
                 }
             }
         }
 
-        if (orientationCounts.isEmpty()) return null;
-        
+        if (orientationCounts.isEmpty())
+            return null;
+
         String majority = Collections.max(orientationCounts.entrySet(), Map.Entry.comparingByValue()).getKey();
-        if ("landscape".equalsIgnoreCase(majority)) return OrientationType.LANDSCAPE;
-        if ("portrait".equalsIgnoreCase(majority)) return OrientationType.PORTRAIT;
+        if ("landscape".equalsIgnoreCase(majority))
+            return OrientationType.LANDSCAPE;
+        if ("portrait".equalsIgnoreCase(majority))
+            return OrientationType.PORTRAIT;
         return null;
     }
 
     private String uploadFinalJson(int adminId, int eateryId, Object data, int menuImageId) throws Exception {
         String fileName = generateFileName(menuImageId);
         byte[] bytes = objectMapper.writeValueAsBytes(data);
-        return gcsService.uploadAdminRecognizedImage((long) adminId, bytes, eateryId + "/templateImages/dataJson", fileName + ".json", ".json");
+        return gcsService.uploadAdminRecognizedImage((long) adminId, bytes, eateryId + "/templateImages/dataJson",
+                fileName + ".json", ".json");
     }
-    
+
     // --- Structuring Logic ---
 
     private StructuredMenuDtos.StructuredMenu structureMenuPages(
-            List<String> jsonUrls, 
-            List<ParsingDtos.MenuContent> generatedMenus, 
-            List<ComboImage> comboImages, 
-            OrientationType orientation, 
-            ParsingDtos.MenuJsonData metadata, 
-            List<String> rawImgUrls, 
+            List<String> jsonUrls,
+            List<ParsingDtos.MenuContent> generatedMenus,
+            List<ComboImage> comboImages,
+            OrientationType orientation,
+            ParsingDtos.MenuJsonData metadata,
+            List<String> rawImgUrls,
             String eateryName) {
 
         Map<String, StructuredMenuDtos.ColumnMetadata> nameToColumnMetadataMap = createColumnMetadataMap(metadata);
-        
+
         StructuredMenuDtos.RestaurantInfo restaurantInfo = null;
+
+        // Merge restaurant_info from all generated menus
         for (ParsingDtos.MenuContent menu : generatedMenus) {
-             if (menu.getRestaurantInfo() != null) {
-                 if (restaurantInfo == null) {
-                     restaurantInfo = menu.getRestaurantInfo();
-                 } else {
-                     if (restaurantInfo.getRestaurantName() == null) restaurantInfo.setRestaurantName(menu.getRestaurantInfo().getRestaurantName());
-                     if (restaurantInfo.getAddress() == null) restaurantInfo.setAddress(menu.getRestaurantInfo().getAddress());
-                     if (restaurantInfo.getHours() == null) restaurantInfo.setHours(menu.getRestaurantInfo().getHours());
-                     if (restaurantInfo.getContact() == null) restaurantInfo.setContact(menu.getRestaurantInfo().getContact());
-                 }
-             }
+            StructuredMenuDtos.RestaurantInfo info = menu.getRestaurantInfo();
+            if (info == null)
+                continue;
+
+            if (restaurantInfo == null) {
+                // Deep copy would be ideal, but for now we assume fresh object usage or manual
+                // copy if needed
+                // Here we simply start with the first one found
+                restaurantInfo = new StructuredMenuDtos.RestaurantInfo();
+                restaurantInfo.setRestaurantName(info.getRestaurantName());
+                restaurantInfo.setAddress(info.getAddress());
+                restaurantInfo.setHours(info.getHours());
+                restaurantInfo.setContact(info.getContact()); // Shallow copy of contact
+                restaurantInfo.setCuisineType(
+                        info.getCuisineType() != null ? new ArrayList<>(info.getCuisineType()) : new ArrayList<>());
+                restaurantInfo
+                        .setAdditionalInfo(info.getAdditionalInfo() != null ? new ArrayList<>(info.getAdditionalInfo())
+                                : new ArrayList<>());
+            } else {
+                if (restaurantInfo.getRestaurantName() == null && info.getRestaurantName() != null)
+                    restaurantInfo.setRestaurantName(info.getRestaurantName());
+                if (restaurantInfo.getAddress() == null && info.getAddress() != null)
+                    restaurantInfo.setAddress(info.getAddress());
+                if (restaurantInfo.getHours() == null && info.getHours() != null)
+                    restaurantInfo.setHours(info.getHours());
+
+                // Merge Contact
+                if (restaurantInfo.getContact() == null)
+                    restaurantInfo.setContact(new StructuredMenuDtos.ContactInfo());
+                StructuredMenuDtos.ContactInfo currContact = restaurantInfo.getContact();
+                StructuredMenuDtos.ContactInfo newContact = info.getContact();
+
+                if (newContact != null) {
+                    if (currContact.getEmail() == null && newContact.getEmail() != null)
+                        currContact.setEmail(newContact.getEmail());
+                    if (currContact.getWebsite() == null && newContact.getWebsite() != null)
+                        currContact.setWebsite(newContact.getWebsite());
+
+                    if (newContact.getPhone() != null) {
+                        List<String> currentPhones = currContact.getPhone() != null
+                                ? new ArrayList<>(currContact.getPhone())
+                                : new ArrayList<>();
+                        Set<String> uniquePhones = new LinkedHashSet<>(currentPhones);
+                        uniquePhones.addAll(newContact.getPhone());
+                        currContact.setPhone(new ArrayList<>(uniquePhones));
+                    }
+                }
+
+                // Merge Arrays
+                if (info.getCuisineType() != null) {
+                    List<String> currentCuisine = restaurantInfo.getCuisineType() != null
+                            ? restaurantInfo.getCuisineType()
+                            : new ArrayList<>();
+                    Set<String> unique = new LinkedHashSet<>(currentCuisine);
+                    unique.addAll(info.getCuisineType());
+                    restaurantInfo.setCuisineType(new ArrayList<>(unique));
+                }
+
+                if (info.getAdditionalInfo() != null) {
+                    List<String> currentAdd = restaurantInfo.getAdditionalInfo() != null
+                            ? restaurantInfo.getAdditionalInfo()
+                            : new ArrayList<>();
+                    Set<String> unique = new LinkedHashSet<>(currentAdd);
+                    unique.addAll(info.getAdditionalInfo());
+                    restaurantInfo.setAdditionalInfo(new ArrayList<>(unique));
+                }
+            }
         }
+
         if (restaurantInfo == null && eateryName != null && !eateryName.isEmpty()) {
             restaurantInfo = new StructuredMenuDtos.RestaurantInfo();
             restaurantInfo.setRestaurantName(eateryName);
-        } else if (restaurantInfo != null && (restaurantInfo.getRestaurantName() == null || restaurantInfo.getRestaurantName().isEmpty()) && eateryName != null) {
+        } else if (restaurantInfo != null
+                && (restaurantInfo.getRestaurantName() == null || restaurantInfo.getRestaurantName().isEmpty())
+                && eateryName != null) {
             restaurantInfo.setRestaurantName(eateryName);
         }
 
@@ -442,66 +554,92 @@ public class MenuService {
         Set<String> usedImageUrls = new HashSet<>();
         int idCounter = 1;
 
+        // Filter valid menus first for consecutive page keys
+        List<ParsingDtos.MenuContent> validMenus = new ArrayList<>();
+        List<String> validUrls = new ArrayList<>();
+
         for (int i = 0; i < generatedMenus.size(); i++) {
-             ParsingDtos.MenuContent menuContent = generatedMenus.get(i);
-             if (menuContent.getSections() == null || menuContent.getSections().isEmpty()) continue;
-
-             String originalUrl = jsonUrls.get(i);
-             String jsonName = Paths.get(URI.create(originalUrl).getPath()).getFileName().toString().replace("_menu.json", "");
-             StructuredMenuDtos.ColumnMetadata columnData = nameToColumnMetadataMap.get(jsonName);
-
-             List<ParsingDtos.MenuSection> sections = processMenuSections(menuContent.getSections());
-             
-             int totalItems = sections.stream().mapToInt(s -> s.getItems() == null ? 0 : s.getItems().size()).sum();
-             if (columnData != null) {
-                 columnData.setTotalItems(totalItems);
-                 if (totalItems > 45 && (columnData.getColumnsCount() == 1 || columnData.getColumnsCount() == 2)) {
-                     columnData.setColumnsCount(3);
-                 } else if (columnData.getColumnsCount() == 1) {
-                     columnData.setColumnsCount(2);
-                 }
-             }
-
-             List<StructuredMenuDtos.ComboImageDto> recommendedImages = mapImagesToSections(sections, comboImages, usedImageUrls);
-             
-             Map.Entry<List<StructuredMenuDtos.FlattenedNode>, Integer> flattened = flattenPageData(sections, recommendedImages, idCounter);
-             List<StructuredMenuDtos.FlattenedNode> flatData = flattened.getKey();
-             idCounter = flattened.getValue();
-
-             StructuredMenuDtos.MenuPage page = new StructuredMenuDtos.MenuPage();
-             page.setData(flatData);
-             page.setColumnData(columnData);
-             page.setRecommendedComboImg(recommendedImages);
-             
-             pagedResult.put("page_" + (i + 1), page);
-        }
-        
-        if (!pagedResult.isEmpty() && restaurantInfo != null) {
-             String lastKey = "page_" + pagedResult.size();
-             StructuredMenuDtos.MenuPage lastPage = pagedResult.get(lastKey);
-             StructuredMenuDtos.FlattenedNode infoNode = new StructuredMenuDtos.FlattenedNode();
-             infoNode.setId("info-" + (idCounter++));
-             infoNode.setType("restaurant_info");
-             infoNode.setValue(restaurantInfo);
-             lastPage.getData().add(infoNode);
+            ParsingDtos.MenuContent c = generatedMenus.get(i);
+            if (c.getSections() != null && !c.getSections().isEmpty()) {
+                validMenus.add(c);
+                validUrls.add(jsonUrls.get(i));
+            }
         }
 
-        String qrUrl = "https://storage.googleapis.com/shelfex-cdn/automation-activation/17/51/menuImages/7bf616.png";
-        if (!pagedResult.isEmpty()) {
-             String lastKey = "page_" + pagedResult.size();
-             StructuredMenuDtos.MenuPage lastPage = pagedResult.get(lastKey);
-             StructuredMenuDtos.FlattenedNode qrNode = new StructuredMenuDtos.FlattenedNode();
-             qrNode.setId("qr-" + (idCounter++));
-             qrNode.setType("qr_code");
-             qrNode.setImgUrl(qrUrl);
-             lastPage.getData().add(qrNode);
+        if (validMenus.isEmpty()) {
+            log.warn("No valid menus with sections found. Returning empty pages object.");
+            StructuredMenuDtos.StructuredMenu result = new StructuredMenuDtos.StructuredMenu();
+            result.setPages(new LinkedHashMap<>());
+            StructuredMenuDtos.MetaData meta = new StructuredMenuDtos.MetaData();
+            meta.setRestaurantInfo(restaurantInfo);
+            meta.setOrientation(orientation != null ? orientation.getValue() : null);
+            meta.setRawImgUrls(rawImgUrls);
+            meta.setSize("A4");
+            result.setMetaData(meta);
+            return result;
+        }
+
+        for (int i = 0; i < validMenus.size(); i++) {
+            ParsingDtos.MenuContent menuContent = validMenus.get(i);
+            String originalUrl = validUrls.get(i);
+
+            String jsonName = Paths.get(URI.create(originalUrl).getPath()).getFileName().toString()
+                    .replace("_menu.json", "");
+            StructuredMenuDtos.ColumnMetadata columnData = nameToColumnMetadataMap.get(jsonName);
+
+            List<ParsingDtos.MenuSection> sections = processMenuSections(menuContent.getSections());
+
+            int totalItems = sections.stream().mapToInt(s -> s.getItems() == null ? 0 : s.getItems().size()).sum();
+            if (columnData != null) {
+                columnData.setTotalItems(totalItems);
+                if (totalItems > 45 && (columnData.getColumnsCount() == 1 || columnData.getColumnsCount() == 2)) {
+                    columnData.setColumnsCount(3);
+                } else if (columnData.getColumnsCount() == 1) {
+                    columnData.setColumnsCount(2);
+                }
+            }
+
+            List<StructuredMenuDtos.ComboImageDto> recommendedImages = mapImagesToSections(sections, comboImages,
+                    usedImageUrls);
+
+            Map.Entry<List<StructuredMenuDtos.FlattenedNode>, Integer> flattened = flattenPageData(sections,
+                    recommendedImages, idCounter);
+            List<StructuredMenuDtos.FlattenedNode> flatData = flattened.getKey();
+            idCounter = flattened.getValue();
+
+            // LAST PAGE additions
+            if (i == validMenus.size() - 1) {
+                if (restaurantInfo != null) {
+                    StructuredMenuDtos.FlattenedNode infoNode = new StructuredMenuDtos.FlattenedNode();
+                    infoNode.setId("info-" + (idCounter++));
+                    infoNode.setType("restaurant_info");
+                    infoNode.setValue(restaurantInfo);
+                    flatData.add(infoNode);
+                }
+
+                String qrUrl = "https://storage.googleapis.com/shelfex-cdn/automation-activation/17/51/menuImages/7bf616.png";
+                if (qrUrl != null) {
+                    StructuredMenuDtos.FlattenedNode qrNode = new StructuredMenuDtos.FlattenedNode();
+                    qrNode.setId("qr-" + (idCounter++));
+                    qrNode.setType("qr_code");
+                    qrNode.setImgUrl(qrUrl);
+                    flatData.add(qrNode);
+                }
+            }
+
+            StructuredMenuDtos.MenuPage page = new StructuredMenuDtos.MenuPage();
+            page.setData(flatData);
+            page.setColumnData(columnData);
+            page.setRecommendedComboImg(recommendedImages);
+
+            pagedResult.put("page_" + (i + 1), page);
         }
 
         StructuredMenuDtos.StructuredMenu result = new StructuredMenuDtos.StructuredMenu();
         result.setPages(pagedResult);
         StructuredMenuDtos.MetaData meta = new StructuredMenuDtos.MetaData();
         meta.setRestaurantInfo(restaurantInfo);
-        meta.setOrientation(orientation != null ? orientation.getValue() : null); 
+        meta.setOrientation(orientation != null ? orientation.getValue() : null);
         meta.setRawImgUrls(rawImgUrls);
         meta.setSize("A4");
         result.setMetaData(meta);
@@ -512,22 +650,23 @@ public class MenuService {
     private List<ParsingDtos.MenuSection> processMenuSections(List<ParsingDtos.MenuSection> rawSections) {
         Map<String, ParsingDtos.MenuSection> map = new LinkedHashMap<>();
         for (ParsingDtos.MenuSection s : rawSections) {
-             if (s.getTitle() == null) continue;
-             String key = s.getTitle().trim().toLowerCase();
-             if (!map.containsKey(key)) {
-                 ParsingDtos.MenuSection newS = new ParsingDtos.MenuSection();
-                 newS.setTitle(s.getTitle().trim());
-                 newS.setNote(s.getNote());
-                 newS.setItems(new ArrayList<>());
-                 map.put(key, newS);
-             }
-             ParsingDtos.MenuSection merged = map.get(key);
-             if (s.getItems() != null) {
-                 for (ParsingDtos.MenuItem item : s.getItems()) {
-                     normalizeItem(item); 
-                     merged.getItems().add(item);
-                 }
-             }
+            if (s.getTitle() == null)
+                continue;
+            String key = s.getTitle().trim().toLowerCase();
+            if (!map.containsKey(key)) {
+                ParsingDtos.MenuSection newS = new ParsingDtos.MenuSection();
+                newS.setTitle(s.getTitle().trim());
+                newS.setNote(s.getNote());
+                newS.setItems(new ArrayList<>());
+                map.put(key, newS);
+            }
+            ParsingDtos.MenuSection merged = map.get(key);
+            if (s.getItems() != null) {
+                for (ParsingDtos.MenuItem item : s.getItems()) {
+                    normalizeItem(item);
+                    merged.getItems().add(item);
+                }
+            }
         }
         return new ArrayList<>(map.values());
     }
@@ -538,60 +677,67 @@ public class MenuService {
         String halfRegex = "^(half|1\\/2|hlf)$";
         String fullRegex = "^(full|ful|fl)$";
 
-        List<String> currentDietInfo = item.getDietaryInfoList(); 
-        if (currentDietInfo == null) currentDietInfo = new ArrayList<>();
-        
+        List<String> currentDietInfo = item.getDietaryInfoList();
+        if (currentDietInfo == null)
+            currentDietInfo = new ArrayList<>();
+
         String primaryDietType = null;
-        
+
         Pattern pVeg = Pattern.compile(vegRegex, Pattern.CASE_INSENSITIVE);
         Pattern pNonVeg = Pattern.compile(nonVegRegex, Pattern.CASE_INSENSITIVE);
         Pattern pHalf = Pattern.compile(halfRegex, Pattern.CASE_INSENSITIVE);
         Pattern pFull = Pattern.compile(fullRegex, Pattern.CASE_INSENSITIVE);
 
         for (String tag : currentDietInfo) {
-             String cleanT = tag != null ? tag.trim() : "";
-             if (cleanT.isEmpty()) continue;
-             if (pVeg.matcher(cleanT).matches()) {
-                 primaryDietType = "veg";
-             } else if (pNonVeg.matcher(cleanT).matches()) {
-                 primaryDietType = "non-veg";
-             }
+            String cleanT = tag != null ? tag.trim() : "";
+            if (cleanT.isEmpty())
+                continue;
+            if (pVeg.matcher(cleanT).matches()) {
+                primaryDietType = "veg";
+            } else if (pNonVeg.matcher(cleanT).matches()) {
+                primaryDietType = "non-veg";
+            }
         }
-        
+
         if (item.getPrices() != null) {
             for (ParsingDtos.ItemPriceRow price : item.getPrices()) {
                 if (price.getDietType() != null) {
                     String t = price.getDietType().trim();
-                    if (pVeg.matcher(t).matches()) price.setDietType("veg");
-                    else if (pNonVeg.matcher(t).matches()) price.setDietType("non-veg");
+                    if (pVeg.matcher(t).matches())
+                        price.setDietType("veg");
+                    else if (pNonVeg.matcher(t).matches())
+                        price.setDietType("non-veg");
                 }
-                
+
                 if (price.getPortion() != null) {
                     String p = price.getPortion().trim();
-                    if (pHalf.matcher(p).matches()) price.setPortion("half");
-                    else if (pFull.matcher(p).matches()) price.setPortion("full");
+                    if (pHalf.matcher(p).matches())
+                        price.setPortion("half");
+                    else if (pFull.matcher(p).matches())
+                        price.setPortion("full");
                 }
-                
+
                 if (primaryDietType != null && price.getDietType() == null) {
                     price.setDietType(primaryDietType);
                 }
             }
         }
-        
+
         List<String> cleanTags = new ArrayList<>();
         for (String tag : currentDietInfo) {
             String cleanT = tag != null ? tag.trim() : "";
-            if (cleanT.isEmpty()) continue;
-             if (!pVeg.matcher(cleanT).matches() && !pNonVeg.matcher(cleanT).matches()) {
-                 cleanTags.add(cleanT);
-             }
+            if (cleanT.isEmpty())
+                continue;
+            if (!pVeg.matcher(cleanT).matches() && !pNonVeg.matcher(cleanT).matches()) {
+                cleanTags.add(cleanT);
+            }
         }
         item.setDietaryInfo(cleanTags.isEmpty() ? null : cleanTags);
     }
 
     private Map.Entry<List<StructuredMenuDtos.FlattenedNode>, Integer> flattenPageData(
-            List<ParsingDtos.MenuSection> sections, 
-            List<StructuredMenuDtos.ComboImageDto> recommendedImages, 
+            List<ParsingDtos.MenuSection> sections,
+            List<StructuredMenuDtos.ComboImageDto> recommendedImages,
             int idCounter) {
 
         Set<String> processedTitles = new HashSet<>();
@@ -600,17 +746,21 @@ public class MenuService {
         ParsingDtos.MenuSection footerSection = null;
         StructuredMenuDtos.ComboImageDto footerImage = null;
 
+        // [0] is the HEADER
         if (!recommendedImages.isEmpty()) {
             headerImage = recommendedImages.get(0);
             String ht = headerImage.getSectionTitle();
             headerSection = sections.stream().filter(s -> s.getTitle().equals(ht)).findFirst().orElse(null);
-            if (headerSection != null) processedTitles.add(headerSection.getTitle());
+            if (headerSection != null)
+                processedTitles.add(headerSection.getTitle());
         }
 
+        // [1] is the FOOTER image
         if (recommendedImages.size() > 1) {
             footerImage = recommendedImages.get(1);
             String ft = footerImage.getSectionTitle();
-            ParsingDtos.MenuSection fs = sections.stream().filter(s -> s.getTitle().equals(ft)).findFirst().orElse(null);
+            ParsingDtos.MenuSection fs = sections.stream().filter(s -> s.getTitle().equals(ft)).findFirst()
+                    .orElse(null);
             if (fs != null && !processedTitles.contains(fs.getTitle())) {
                 footerSection = fs;
                 processedTitles.add(footerSection.getTitle());
@@ -620,20 +770,23 @@ public class MenuService {
             }
         }
 
-        int[] counterPtr = {idCounter};
+        int[] counterPtr = { idCounter };
 
-        List<StructuredMenuDtos.FlattenedNode> headerItems = headerSection != null ? 
-            createFlatSection(headerSection, headerImage, "before", counterPtr) : new ArrayList<>();
-        
+        List<StructuredMenuDtos.FlattenedNode> headerItems = headerSection != null
+                ? createFlatSection(headerSection, headerImage, "before", counterPtr)
+                : new ArrayList<>();
+
+        List<StructuredMenuDtos.FlattenedNode> footerItems = footerSection != null
+                ? createFlatSection(footerSection, footerImage, "after", counterPtr)
+                : new ArrayList<>();
+
+        // Get ALL other sections
         List<StructuredMenuDtos.FlattenedNode> middleItems = new ArrayList<>();
         for (ParsingDtos.MenuSection s : sections) {
             if (!processedTitles.contains(s.getTitle())) {
                 middleItems.addAll(createFlatSection(s, null, "none", counterPtr));
             }
         }
-
-        List<StructuredMenuDtos.FlattenedNode> footerItems = footerSection != null ?
-            createFlatSection(footerSection, footerImage, "after", counterPtr) : new ArrayList<>();
 
         List<StructuredMenuDtos.FlattenedNode> result = new ArrayList<>();
         result.addAll(headerItems);
@@ -644,11 +797,11 @@ public class MenuService {
     }
 
     private List<StructuredMenuDtos.FlattenedNode> createFlatSection(
-            ParsingDtos.MenuSection section, 
-            StructuredMenuDtos.ComboImageDto image, 
-            String position, 
+            ParsingDtos.MenuSection section,
+            StructuredMenuDtos.ComboImageDto image,
+            String position,
             int[] idCounter) {
-        
+
         List<StructuredMenuDtos.FlattenedNode> results = new ArrayList<>();
         if (image != null && "before".equals(position)) {
             StructuredMenuDtos.FlattenedNode img = new StructuredMenuDtos.FlattenedNode();
@@ -657,13 +810,13 @@ public class MenuService {
             img.setImgUrl(image.getCompressImgUrl());
             results.add(img);
         }
-        
+
         StructuredMenuDtos.FlattenedNode sec = new StructuredMenuDtos.FlattenedNode();
         sec.setId("section-" + (idCounter[0]++));
         sec.setType("section");
         sec.setTitle(section.getTitle());
         results.add(sec);
-        
+
         if (section.getItems() != null) {
             for (ParsingDtos.MenuItem item : section.getItems()) {
                 StructuredMenuDtos.FlattenedNode itemNode = new StructuredMenuDtos.FlattenedNode();
@@ -673,8 +826,8 @@ public class MenuService {
                 itemNode.setText(item.getDescription());
                 if (item.getPrices() != null) {
                     itemNode.setPrices(item.getPrices().stream()
-                        .map(p -> new StructuredMenuDtos.ItemPrice(p.getDietType(), p.getPortion(), p.getPrice()))
-                        .collect(Collectors.toList()));
+                            .map(p -> new StructuredMenuDtos.ItemPrice(p.getDietType(), p.getPortion(), p.getPrice()))
+                            .collect(Collectors.toList()));
                 }
                 results.add(itemNode);
             }
@@ -687,46 +840,56 @@ public class MenuService {
             img.setImgUrl(image.getCompressImgUrl());
             results.add(img);
         }
-        
+
         return results;
     }
-    
+
     private List<StructuredMenuDtos.ComboImageDto> mapImagesToSections(
-            List<ParsingDtos.MenuSection> sections, 
-            List<ComboImage> comboImages, 
+            List<ParsingDtos.MenuSection> sections,
+            List<ComboImage> comboImages,
             Set<String> usedImageUrls) {
-        
+
         class ImageMatch {
             ParsingDtos.MenuSection section;
             ComboImage image;
             int score;
-            ImageMatch(ParsingDtos.MenuSection s, ComboImage i, int sc) { section = s; image = i; score = sc; }
+
+            ImageMatch(ParsingDtos.MenuSection s, ComboImage i, int sc) {
+                section = s;
+                image = i;
+                score = sc;
+            }
         }
 
         List<ImageMatch> potentialMatches = new ArrayList<>();
 
         for (ParsingDtos.MenuSection section : sections) {
-            if (section.getTitle() == null) continue;
+            if (section.getTitle() == null)
+                continue;
             String searchTitle = section.getTitle().toLowerCase();
 
             for (ComboImage image : comboImages) {
-                if (image.getInfo() == null || usedImageUrls.contains(image.getImgUrl())) continue;
+                if (image.getInfo() == null || usedImageUrls.contains(image.getImgUrl()))
+                    continue;
 
                 List<Pattern> keywords = image.getInfo().stream()
                         .filter(s -> s != null && !s.trim().isEmpty())
                         .map(s -> Pattern.compile(Pattern.quote(s), Pattern.CASE_INSENSITIVE))
                         .collect(Collectors.toList());
 
-                if (keywords.isEmpty()) continue;
+                if (keywords.isEmpty())
+                    continue;
 
                 int currentScore = 0;
                 // A. Section title match
-                if (keywords.stream().anyMatch(p -> p.matcher(searchTitle).find())) currentScore++;
+                if (keywords.stream().anyMatch(p -> p.matcher(searchTitle).find()))
+                    currentScore++;
 
                 // B. Item names match
                 if (section.getItems() != null) {
                     for (ParsingDtos.MenuItem item : section.getItems()) {
-                        if (item.getName() != null && keywords.stream().anyMatch(p -> p.matcher(item.getName().toLowerCase()).find())) {
+                        if (item.getName() != null
+                                && keywords.stream().anyMatch(p -> p.matcher(item.getName().toLowerCase()).find())) {
                             currentScore++;
                         }
                     }
@@ -744,10 +907,11 @@ public class MenuService {
         Set<String> assignedSections = new HashSet<>();
 
         for (ImageMatch match : potentialMatches) {
-            if (!assignedSections.contains(match.section.getTitle()) && !usedImageUrls.contains(match.image.getImgUrl())) {
+            if (!assignedSections.contains(match.section.getTitle())
+                    && !usedImageUrls.contains(match.image.getImgUrl())) {
                 assignedSections.add(match.section.getTitle());
                 usedImageUrls.add(match.image.getImgUrl());
-                
+
                 StructuredMenuDtos.ComboImageDto dto = new StructuredMenuDtos.ComboImageDto();
                 dto.setImgUrl(match.image.getImgUrl());
                 dto.setCompressImgUrl(match.image.getCompressImgUrl());
@@ -762,42 +926,48 @@ public class MenuService {
         List<StructuredMenuDtos.ComboImageDto> defaultImages = new ArrayList<>();
         // Hardcoded defaults from TS
         StructuredMenuDtos.ComboImageDto d1 = new StructuredMenuDtos.ComboImageDto();
-        d1.setImgUrl("https://storage.googleapis.com/shelfex-cdn/automation-activation/3/comboImages/1753081335524_24048..jpg");
-        d1.setCompressImgUrl("https://storage.googleapis.com/shelfex-cdn/automation-activation/1/comboImages/compressedImage/1753081335524_24048..webp");
+        d1.setImgUrl(
+                "https://storage.googleapis.com/shelfex-cdn/automation-activation/3/comboImages/1753081335524_24048..jpg");
+        d1.setCompressImgUrl(
+                "https://storage.googleapis.com/shelfex-cdn/automation-activation/1/comboImages/compressedImage/1753081335524_24048..webp");
         d1.setInfo(Collections.singletonList("default-image-1"));
         defaultImages.add(d1);
 
         StructuredMenuDtos.ComboImageDto d2 = new StructuredMenuDtos.ComboImageDto();
-        d2.setImgUrl("https://storage.googleapis.com/shelfex-cdn/automation-activation/3/comboImages/1753081508062_BURGE..jpg");
-        d2.setCompressImgUrl("https://storage.googleapis.com/shelfex-cdn/automation-activation/1/comboImages/compressedImage/1753081508062_BURGE..webp");
+        d2.setImgUrl(
+                "https://storage.googleapis.com/shelfex-cdn/automation-activation/3/comboImages/1753081508062_BURGE..jpg");
+        d2.setCompressImgUrl(
+                "https://storage.googleapis.com/shelfex-cdn/automation-activation/1/comboImages/compressedImage/1753081508062_BURGE..webp");
         d2.setInfo(Collections.singletonList("default-image-2"));
         defaultImages.add(d2);
 
         if (results.size() < 2) {
-             Set<String> assignedTitles = results.stream().map(StructuredMenuDtos.ComboImageDto::getSectionTitle).collect(Collectors.toSet());
-             List<ParsingDtos.MenuSection> availableSections = sections.stream()
-                 .filter(s -> !assignedTitles.contains(s.getTitle()))
-                 .collect(Collectors.toList());
-             
-             int defaultsNeeded = 2 - results.size();
-             if (defaultsNeeded == 2 && availableSections.size() >= 1) {
-                 ParsingDtos.MenuSection first = availableSections.size() > 1 ? availableSections.get(1) : availableSections.get(0);
-                 StructuredMenuDtos.ComboImageDto i1 = copyDto(defaultImages.get(0));
-                 i1.setSectionTitle(first.getTitle());
-                 results.add(i1);
-                 
-                 if (availableSections.size() > 1) {
-                     ParsingDtos.MenuSection last = availableSections.get(availableSections.size() - 1);
-                     StructuredMenuDtos.ComboImageDto i2 = copyDto(defaultImages.get(1));
-                     i2.setSectionTitle(last.getTitle());
-                     results.add(i2);
-                 }
-             } else if (defaultsNeeded == 1 && availableSections.size() >= 1) {
-                 ParsingDtos.MenuSection target = availableSections.get(availableSections.size() - 1);
-                 StructuredMenuDtos.ComboImageDto i1 = copyDto(defaultImages.get(0));
-                 i1.setSectionTitle(target.getTitle());
-                 results.add(i1);
-             }
+            Set<String> assignedTitles = results.stream().map(StructuredMenuDtos.ComboImageDto::getSectionTitle)
+                    .collect(Collectors.toSet());
+            List<ParsingDtos.MenuSection> availableSections = sections.stream()
+                    .filter(s -> !assignedTitles.contains(s.getTitle()))
+                    .collect(Collectors.toList());
+
+            int defaultsNeeded = 2 - results.size();
+            if (defaultsNeeded == 2 && availableSections.size() >= 1) {
+                ParsingDtos.MenuSection first = availableSections.size() > 1 ? availableSections.get(1)
+                        : availableSections.get(0);
+                StructuredMenuDtos.ComboImageDto i1 = copyDto(defaultImages.get(0));
+                i1.setSectionTitle(first.getTitle());
+                results.add(i1);
+
+                if (availableSections.size() > 1) {
+                    ParsingDtos.MenuSection last = availableSections.get(availableSections.size() - 1);
+                    StructuredMenuDtos.ComboImageDto i2 = copyDto(defaultImages.get(1));
+                    i2.setSectionTitle(last.getTitle());
+                    results.add(i2);
+                }
+            } else if (defaultsNeeded == 1 && availableSections.size() >= 1) {
+                ParsingDtos.MenuSection target = availableSections.get(availableSections.size() - 1);
+                StructuredMenuDtos.ComboImageDto i1 = copyDto(defaultImages.get(0));
+                i1.setSectionTitle(target.getTitle());
+                results.add(i1);
+            }
         }
         return results;
     }
@@ -813,27 +983,26 @@ public class MenuService {
     private Map<String, StructuredMenuDtos.ColumnMetadata> createColumnMetadataMap(ParsingDtos.MenuJsonData metadata) {
         Map<String, StructuredMenuDtos.ColumnMetadata> map = new HashMap<>();
         if (metadata != null && metadata.getProcessedFiles() != null) {
-             for (Map.Entry<String, ParsingDtos.ProcessedFile> e : metadata.getProcessedFiles().entrySet()) {
-                 String name = getFileNameWithoutExt(e.getKey());
-                 if (e.getValue().getColumnMetadata() != null) {
-                     map.put(name, e.getValue().getColumnMetadata());
-                 }
-             }
+            for (Map.Entry<String, ParsingDtos.ProcessedFile> e : metadata.getProcessedFiles().entrySet()) {
+                String name = getFileNameWithoutExt(e.getKey());
+                if (e.getValue().getColumnMetadata() != null) {
+                    map.put(name, e.getValue().getColumnMetadata());
+                }
+            }
         }
         return map;
     }
 
     private void sendNotifications(int adminId, int eateryId, String dataJsonUrl, long templateId) {
-         webSocketNotificationService.notifyMenuProcessingStatus(
+        webSocketNotificationService.notifyMenuProcessingStatus(
                 (long) adminId, (long) eateryId,
                 MenuProcessingStatusDto.builder()
-                        .eateryId((long)eateryId)
+                        .eateryId((long) eateryId)
                         .status(MenuStatus.COMPLETED)
                         .message("Menu for eatery " + eateryId + " has been successfully processed.")
                         .dataJsonUrl(dataJsonUrl)
                         .templateId(templateId)
-                        .build()
-         );
+                        .build());
     }
 
     private int[] extractIdsFromUrl(String url) throws Exception {
@@ -847,7 +1016,8 @@ public class MenuService {
         }
 
         if (activationIndex == -1 || urlParts.length < activationIndex + 3) {
-            throw new Exception("Invalid URL format: Could not find '.../automation-activation/adminId/eateryId/...' in " + url);
+            throw new Exception(
+                    "Invalid URL format: Could not find '.../automation-activation/adminId/eateryId/...' in " + url);
         }
 
         try {
@@ -860,13 +1030,23 @@ public class MenuService {
     }
 
     private String getFileNameWithoutExt(String path) {
-        String filename = Paths.get(path).getFileName().toString();
+        // Handle full URLs by extracting path component first
+        String filePath = path;
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            try {
+                filePath = URI.create(path).getPath();
+            } catch (Exception e) {
+                // Fall back to original path if URI parsing fails
+            }
+        }
+        String filename = Paths.get(filePath).getFileName().toString();
         int dot = filename.lastIndexOf('.');
         return dot > 0 ? filename.substring(0, dot) : filename;
     }
-    
+
     private String getExtension(String filename) {
-        if (filename == null) return "";
+        if (filename == null)
+            return "";
         int i = filename.lastIndexOf('.');
         return i > 0 ? filename.substring(i) : "";
     }
@@ -874,7 +1054,7 @@ public class MenuService {
     private String generateFileName(int menuImageId) {
         return menuImageId + "_" + System.currentTimeMillis() + Double.toString(Math.random()).substring(2, 9);
     }
-    
+
     private void updateMenuStatus(Integer menuId, MenuStatus status) {
         Optional<Menu> menu = menuRepository.findById(menuId);
         if (menu.isPresent()) {
@@ -882,8 +1062,8 @@ public class MenuService {
             menuRepository.save(menu.get());
         }
     }
-    
-     public MenuDto.MenuStatusResponse getMenuStatus(Integer eateryId, Integer adminId) throws Exception {
+
+    public MenuDto.MenuStatusResponse getMenuStatus(Integer eateryId, Integer adminId) throws Exception {
         Optional<Menu> menuOpt = menuRepository.findFirstByEateryIdAndAdminIdOrderByCreatedAtDesc(eateryId, adminId);
 
         if (menuOpt.isEmpty()) {

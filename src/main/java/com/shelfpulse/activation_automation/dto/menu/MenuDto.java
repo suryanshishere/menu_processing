@@ -92,4 +92,25 @@ public class MenuDto {
             this.templateId = templateId;
         }
     }
+
+    public static class MenuImageInfo {
+        private String id;
+        private String side;
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public String getSide() {
+            return side;
+        }
+
+        public void setSide(String side) {
+            this.side = side;
+        }
+    }
 }

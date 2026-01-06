@@ -396,6 +396,10 @@ public class StructuredMenuDtos {
         private Integer columnsCount;
         @JsonProperty("total_items")
         private Integer totalItems;
+        @JsonProperty("total_sections")
+        private Integer totalSections;
+        @JsonProperty("menu_sections_count")
+        private Integer menuSectionsCount;
         private List<Integer> coordinates;
 
         public Integer getColumnsCount() {
@@ -412,6 +416,22 @@ public class StructuredMenuDtos {
 
         public void setTotalItems(Integer totalItems) {
             this.totalItems = totalItems;
+        }
+
+        public Integer getTotalSections() {
+            return totalSections;
+        }
+
+        public void setTotalSections(Integer totalSections) {
+            this.totalSections = totalSections;
+        }
+
+        public Integer getMenuSectionsCount() {
+            return menuSectionsCount;
+        }
+
+        public void setMenuSectionsCount(Integer menuSectionsCount) {
+            this.menuSectionsCount = menuSectionsCount;
         }
 
         public List<Integer> getCoordinates() {

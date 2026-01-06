@@ -54,13 +54,27 @@ public class MenuController extends BaseController {
     @PostMapping(value = "/menu_image/{eateryId}", consumes = "multipart/form-data")
     public ResponseEntity<?> uploadMenuImages(
             @PathVariable @Positive(message = "Eatery ID must be a positive integer") Integer eateryId,
-            @RequestParam("menuImage") List<MultipartFile> menuImages) {
+            @RequestParam("menuImage") List<MultipartFile> menuImages,
+            @RequestParam(value = "menuImageInfo", required = false) String menuImageInfoJson) {
 
         try {
             Integer adminId = getAdminIdFromAuth();
             UserType userType = getUserTypeFromAuth();
 
-            Menu menu = menuService.uploadMenuImages(eateryId, adminId, userType, menuImages);
+            List<MenuDto.MenuImageInfo> menuImageInfos = null;
+            if (menuImageInfoJson != null && !menuImageInfoJson.isEmpty()) {
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    menuImageInfos = mapper.readValue(menuImageInfoJson,
+                            new com.fasterxml.jackson.core.type.TypeReference<List<MenuDto.MenuImageInfo>>() {
+                            });
+                } catch (Exception e) {
+                    // Log warning but proceed without info
+                    // log.warn("Failed to parse menuImageInfoJson: " + e.getMessage());
+                }
+            }
+
+            Menu menu = menuService.uploadMenuImages(eateryId, adminId, userType, menuImages, menuImageInfos);
 
             return ResponseEntity.status(202).body(Map.of(
                     "status", true,
